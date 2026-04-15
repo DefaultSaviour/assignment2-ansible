@@ -1,0 +1,46 @@
+- name: Provision SSH key and Security Groups for Production EC2 Instance
+  hosts: localhost
+  connection: local
+  vars_files:
+    - vault.yml
+
+  tasks:
+
+  - name: Delete EC2 Key if it exists
+    ec2_key:
+      name: "runcalc_pro_key"
+      region: "{{ aws_region }}"
+      aws_access_key: "{{ vault_aws_access_key }}"
+      aws_secret_key: "{{ vault_aws_secret_key }}"
+      state: absent
+
+  - name: Create EC2 SSH key
+    ec2_key:
+      name: "runcalc_pro_key"
+      region: "{{ aws_region }}"
+      aws_access_key: "{{ vault_aws_access_key }}"
+      aws_secret_key: "{{ vault_aws_secret_key }}"
+    register: ec2_key
+
+  - name: Save EC2 SSH key to file
+    copy:
+      content: "{{ ec2_key.key.private_key }}"
+      dest: runcalc_pro_key.pem
+      mode: 0600
+
+  - name: Create Security Group for app instance
+    ec2_group:
+      name: "runcalc_pro_sg"
+      description: EC2 VPC Security Group for RunCalc Pro
+      region: "{{ aws_region }}"
+      aws_access_key: "{{ vault_aws_access_key }}"
+      aws_secret_key: "{{ vault_aws_secret_key }}"
+      rules:
+      - proto: tcp
+        ports: 80
+        cidr_ip: 0.0.0.0/0
+        rule_desc: Allow HTTP access from anywhere
+      - proto: tcp
+        ports: 22
+        cidr_ip: 0.0.0.0/0
+        rule_desc: Allow SSH from anywhere

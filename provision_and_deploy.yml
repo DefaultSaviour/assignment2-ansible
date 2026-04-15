@@ -1,0 +1,130 @@
+- name: Stage 1 - Launch Production EC2 Instance
+  hosts: localhost
+  connection: local
+  vars_files:
+    - vault.yml
+  vars:
+    instance_name: RunCalc_Pro_Production
+    key_name: runcalc_pro_key
+    instance_type: t2.small
+    security_group: runcalc_pro_sg
+    image_id: ami-0866a3c8686eaeeba
+    region: "{{ aws_region }}"
+    elastic_ip: "34.232.104.121"
+
+  tasks:
+    - name: Launch T2 small instance on EC2
+      ec2_instance:
+        name: "{{ instance_name }}"
+        key_name: "{{ key_name }}"
+        instance_type: "{{ instance_type }}"
+        security_group: "{{ security_group }}"
+        image_id: "{{ image_id }}"
+        region: "{{ region }}"
+        aws_access_key: "{{ vault_aws_access_key }}"
+        aws_secret_key: "{{ vault_aws_secret_key }}"
+        state: started
+        wait: yes
+      register: runcalc_instance
+
+    - name: Associate Elastic IP with the new instance
+      ec2_eip:
+        region: "{{ region }}"
+        aws_access_key: "{{ vault_aws_access_key }}"
+        aws_secret_key: "{{ vault_aws_secret_key }}"
+        device_id: "{{ runcalc_instance.instances[0].instance_id }}"
+        ip: "{{ elastic_ip }}"
+        state: present
+
+    - name: Add new instance to host group via Elastic IP
+      add_host:
+        hostname: "{{ elastic_ip }}"
+        groupname: ec2_production
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ elastic_ip }}"
+        port: 22
+        delay: 20
+        timeout: 320
+        state: started
+
+- name: Stage 2 - Install Docker and Deploy App
+  hosts: ec2_production
+  vars_files:
+    - vault.yml
+  vars:
+    ansible_ssh_private_key_file: runcalc_pro_key.pem
+    remote_ec2_user: ubuntu
+  remote_user: "{{ remote_ec2_user }}"
+  become: yes
+  become_method: sudo
+
+  tasks:
+    - name: Add the Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker Repository
+      apt_repository:
+        repo: deb https://download.docker.com/linux/ubuntu jammy stable
+        state: present
+
+    - name: Update apt packages and install docker-ce
+      apt:
+        name: docker-ce
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add user to docker group
+      user:
+        name: "{{ remote_ec2_user }}"
+        groups: docker
+        append: yes
+
+    - name: Stop and remove any existing container
+      shell: docker stop runcalc || true && docker rm runcalc || true
+      changed_when: false
+
+    - name: Pull the specified Docker image
+      shell: "docker pull defaultsaviour/runcalc-pro:{{ image_tag }}"
+
+    - name: Run the Docker container
+      shell: "docker run -d --name runcalc -p 80:80 defaultsaviour/runcalc-pro:{{ image_tag }}"
+
+- name: Stage 3 - Verify Application is Running
+  hosts: localhost
+  connection: local
+  vars:
+    elastic_ip: "34.232.104.121"
+
+  tasks:
+    - name: Wait for app to be ready
+      wait_for:
+        host: "{{ elastic_ip }}"
+        port: 80
+        delay: 10
+        timeout: 60
+        state: started
+
+    - name: Verify application responds via curl
+      shell: "curl -f -s -o /dev/null -w '%{http_code}' http://{{ elastic_ip }}"
+      register: curl_result
+      changed_when: false
+
+    - name: Display verification result
+      debug:
+        msg: "Application is live at http://{{ elastic_ip }} - HTTP Status: {{ curl_result.stdout }}"
+
+    - name: Fail if app is not responding correctly
+      fail:
+        msg: "Application health check failed! HTTP Status: {{ curl_result.stdout }}"
+      when: curl_result.stdout != "200"
