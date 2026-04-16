@@ -21,7 +21,7 @@
       content: "{{ ec2_key.key.private_key }}"
       dest: /home/ec2-user/.jenkins/workspace/assignment2-cd/runcalc_pro_key.pem
       mode: 0600
-    when: ec2_key.changed
+    when: ec2_key.key.private_key is defined
 
   - name: Create Security Group for app instance
     ec2_group:
