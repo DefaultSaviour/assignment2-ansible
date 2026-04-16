@@ -6,27 +6,22 @@
 
   tasks:
 
-  - name: Delete EC2 Key if it exists
+  - name: Create EC2 SSH key if it does not exist
     ec2_key:
       name: "runcalc_pro_key"
       region: "{{ aws_region }}"
       aws_access_key: "{{ vault_aws_access_key }}"
       aws_secret_key: "{{ vault_aws_secret_key }}"
-      state: absent
-
-  - name: Create EC2 SSH key
-    ec2_key:
-      name: "runcalc_pro_key"
-      region: "{{ aws_region }}"
-      aws_access_key: "{{ vault_aws_access_key }}"
-      aws_secret_key: "{{ vault_aws_secret_key }}"
+      security_token: "{{ vault_aws_session_token }}"
+      state: present
     register: ec2_key
 
-  - name: Save EC2 SSH key to file
+  - name: Save EC2 SSH key to file (only if newly created)
     copy:
       content: "{{ ec2_key.key.private_key }}"
-      dest: runcalc_pro_key.pem
+      dest: /home/ec2-user/.jenkins/workspace/assignment2-cd/runcalc_pro_key.pem
       mode: 0600
+    when: ec2_key.changed
 
   - name: Create Security Group for app instance
     ec2_group:
@@ -35,6 +30,7 @@
       region: "{{ aws_region }}"
       aws_access_key: "{{ vault_aws_access_key }}"
       aws_secret_key: "{{ vault_aws_secret_key }}"
+      security_token: "{{ vault_aws_session_token }}"
       rules:
       - proto: tcp
         ports: 80
