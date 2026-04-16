@@ -1,4 +1,4 @@
-- name: Stage 1 - Launch Production EC2 Instance
+- name: Stage 1 - Ensure Production EC2 Instance is Running
   hosts: localhost
   connection: local
   vars_files:
@@ -13,7 +13,18 @@
     elastic_ip: "34.232.104.121"
 
   tasks:
-    - name: Launch T2 small instance on EC2
+    - name: Check if instance already exists
+      ec2_instance_info:
+        region: "{{ region }}"
+        aws_access_key: "{{ vault_aws_access_key }}"
+        aws_secret_key: "{{ vault_aws_secret_key }}"
+        security_token: "{{ vault_aws_session_token }}"
+        filters:
+          tag:Name: "{{ instance_name }}"
+          instance-state-name: running
+      register: existing_instance
+
+    - name: Launch T2 small instance on EC2 (only if not running)
       ec2_instance:
         name: "{{ instance_name }}"
         key_name: "{{ key_name }}"
@@ -23,20 +34,23 @@
         region: "{{ region }}"
         aws_access_key: "{{ vault_aws_access_key }}"
         aws_secret_key: "{{ vault_aws_secret_key }}"
+        security_token: "{{ vault_aws_session_token }}"
         state: started
         wait: yes
-      register: runcalc_instance
+      register: new_instance
+      when: existing_instance.instances | length == 0
 
-    - name: Associate Elastic IP with the new instance
+    - name: Associate Elastic IP with the instance
       ec2_eip:
         region: "{{ region }}"
         aws_access_key: "{{ vault_aws_access_key }}"
         aws_secret_key: "{{ vault_aws_secret_key }}"
-        device_id: "{{ runcalc_instance.instances[0].instance_id }}"
+        security_token: "{{ vault_aws_session_token }}"
+        device_id: "{{ (existing_instance.instances | length > 0) | ternary(existing_instance.instances[0].instance_id, new_instance.instances[0].instance_id) }}"
         ip: "{{ elastic_ip }}"
         state: present
 
-    - name: Add new instance to host group via Elastic IP
+    - name: Add instance to host group via Elastic IP
       add_host:
         hostname: "{{ elastic_ip }}"
         groupname: ec2_production
@@ -62,21 +76,30 @@
   become_method: sudo
 
   tasks:
+    - name: Check if Docker is installed
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
+
     - name: Add the Docker GPG key
       apt_key:
         url: https://download.docker.com/linux/ubuntu/gpg
         state: present
+      when: docker_check.rc != 0
 
     - name: Add Docker Repository
       apt_repository:
         repo: deb https://download.docker.com/linux/ubuntu jammy stable
         state: present
+      when: docker_check.rc != 0
 
     - name: Update apt packages and install docker-ce
       apt:
         name: docker-ce
         state: present
         update_cache: true
+      when: docker_check.rc != 0
 
     - name: Ensure Docker service is running
       service:

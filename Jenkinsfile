@@ -28,21 +28,21 @@ pipeline {
         stage('Provision Key and Security Group') {
             steps {
                 echo "Provisioning SSH key and security group..."
-                sh """
+                sh '''
                     ansible-playbook provision_key_security_group.yml \
-                        --vault-password-file ${VAULT_PASSWORD_FILE}
-                """
+                        --vault-password-file $VAULT_PASSWORD_FILE
+                '''
             }
         }
 
         stage('Provision EC2 and Deploy App') {
             steps {
-                echo "Provisioning EC2 instance and deploying image: ${params.IMAGE_TAG}..."
-                sh """
+                echo "Provisioning EC2 instance and deploying image..."
+                sh '''
                     ansible-playbook provision_and_deploy.yml \
-                        --vault-password-file ${VAULT_PASSWORD_FILE} \
-                        --extra-vars "image_tag=${params.IMAGE_TAG}"
-                """
+                        --vault-password-file $VAULT_PASSWORD_FILE \
+                        --extra-vars "image_tag=$IMAGE_TAG"
+                '''
             }
         }
 
@@ -58,7 +58,7 @@ pipeline {
 
     post {
         success {
-            echo "CD complete. App deployed: defaultsaviour/runcalc-pro:${params.IMAGE_TAG}"
+            echo "CD complete. App deployed: defaultsaviour/runcalc-pro:$IMAGE_TAG"
             echo "Live at: http://34.232.104.121"
         }
         failure {
